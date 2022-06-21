@@ -1,0 +1,754 @@
+---
+title: "Sentiment Analysis"
+author: Ada Canaydin 
+date: "20-6-2022"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# OVERVIEW
+
+1.  Introduction & Problem Statement
+
+2.  Research Question
+
+3.  Imports
+
+4.  Collecting Twitter Data (after Russias' threat)
+
+5.  Pre-processing Twitter Data Obtained from Kaggle (before Russias' threat)
+
+6.  Text preparation
+
+7.  Descriptive Analysis
+
+    7.1 Word cloud
+
+    7.2 Most frequent words
+
+8. Bigram Analysis
+
+9. Unsupervised text analysis: Topic Modelling
+
+10. Sentiment Analysis
+
+    10.1 Sentiment Analysis at Word Level
+
+    10.2 Sentiment Analysis at Full Tweet Level
+
+11. Limitations of the study
+
+12. Conclusion
+
+# 1. Introduction & Problem Statement
+
+The ongoing Russian war in Ukraine has caused pronounced impacts globally, among of which pushing up the already-high oil and gas prices in the European Union, which relied on Russia in supplying about 40% of its gas consumption in 2021. This has naturally brought people's attention towards their pockets and how flexible their budgets can extend to meet the challenge of this energy prices' increase.
+
+In 8th of March, Russia has threatened to close an European major gas pipeline that goes through Russian-controlled territory, which lead to creating fears of an energy war. Europe's reliance on Russian gas has sparked an increased support for energy independence, particularly through renewable. Thus, in the medium to long term, it is expected to be a push to speed up the energy transition and eventually reduce the reliance on fossil fuel, although the evolution of transition will likely vary by region.
+
+In this notebook, we aim to study the reaction of people on social media towards this matter, by web scraping tweets that are posted after Russia threatened Europe's gas supply, along with available data set from Kaggle which contains tweets before the threat (<https://www.kaggle.com/datasets/shyambhu/ukraine-war-tweets>).
+
+# 2. Research Question
+
+More specifically, we want to address:
+
+Q1) How were people talking about energy before and after the Russia's threat?
+
+Q2) What is the impact of Russia's threat for cutting down gas supply to Europe during the war in Ukraine on the evolution of people's opinion on transitioning to renewable sources of energy?
+
+
+Key methods used: Web scraping ,text mining, NLP, Wordclouds, sentiment analysis.
+
+# 3. Imports
+```{r libraries, echo=T, results='hide', message=FALSE, warning=FALSE}
+# install.packages("pacman","stats","base","NLP","textmineR","sentimentr")
+# install.packages("httpuv","textstem","RColorBrewer","topicmodels","ldatuning","campfin")
+library(sentimentr)
+library(textdata)
+library(ldatuning)
+library(topicmodels)
+library(httpuv)
+library(rtweet)
+library(dplyr)
+library(devtools)
+library(tidyverse)
+library(tidytext)
+library(textmineR)
+library(tidyr)
+library(reshape2)
+library(glue)
+library(stringr)
+library(tm)
+library(ggplot2)
+library(stats)
+library(base)
+library(plyr)
+library(stringr)
+library(tm)
+library(textstem)
+library(wordcloud)
+library(igraph)
+library(syuzhet)
+```
+
+# 4. Collecting Twitter Data
+
+In order to answer our research question, first, we scrapped tweets by using the following query for keywords: 'ukraine' OR '#ukrainewar' AND 'energy'. Our obtained data set included approximately 10.000 tweets between 12-05-2022 and 18-05-2022 which is after Russia threatens to stop supplying gas to Europe. Note that we could not scrape tweets that are older than one week due to the limitations of 'rtweet' package.
+
+```{r,eval=FALSE}
+# Define API
+api_key = "KNuEyKRNc9SBkzL4AcoDxA4Pb"
+api_secret = "SBuQ4UvLkZFsGepsvnxLoJwUIgXHmvW8d3rNwSdJJfnc1IX7Xl"
+access_token= "553779742-DjNfBI5utWWG1rLaUuAlhpYdX72BCYbMMJ1bawiX" access_token_secret="QXka5OeyFA23W5kPPE0YGUzjVhoV4awxS7GRLMnDFO25p"
+
+# Authentication via web browser
+twitter_token <- create_token(app = "kuleuven_bigdata", consumer_key = api_key, consumer_secret = api_secret, set_renv = FALSE)
+
+# Check it is stored and working
+twitter_token
+```
+
+```{r,eval=FALSE}
+# Search for tweets containing 'ukraine, energy, renewable' written in English,using 'lang' function.
+query3 <- search_tweets(q="ukraine OR #ukrainewar AND energy",
+                           lang="en",
+                           n = 100,
+                           include_rts = FALSE,
+                           retryonratelimit = TRUE)
+# Save the data set
+save(query3,file="query3.RData")
+```
+
+```{r, include=FALSE}
+load("query3.RData")
+```
+
+# 5. Pre-processing Twitter Data Obtained from Kaggle
+
+As next step, we collected tweets that are posted before the threat from an available data set in Kaggle. For this data set pre-processing is applied to only include tweets that are posted in English and during correct time frame. Moreover, tweets are filtered on keyword 'energy'.
+
+```{r,eval=FALSE}
+
+# Loading dataset
+data_before_load <- read_csv("Ukraine_war.csv")
+data_before = data_before_load %>% select(id, content, date, lang)
+head(data_before)
+dim(data_before)
+
+# Renaming the columns id and content user_id and text
+colnames(data_before)[1:2] <- c("user_id","text")
+
+# Keep only english tweets
+data_before <- data_before[which(data_before$lang=='en'), ]
+
+# Filter for tweets with the word "energy"
+data_before = data_before[stringr::str_detect(tolower(data_before$text), "energy"),]
+
+# Changing date format
+data_before$date <- as.Date(data_before$date, format= "%d-%m-%Y")
+unique(data_before$date)
+
+# Changing user_id format to character format
+data_before$user_id <- as.character(data_before$user_id)
+head(data_before$user_id)
+
+
+# Filter for tweets between 01/01/2022 to 05/03/2022
+data_before = data_before %>% filter(between(date,as.Date("01-01-2022", format = "%d-%m-%Y"),as.Date("05-03-2022", format = "%d-%m-%Y")))
+dim(data_before)
+write.csv(data_before, "data_before.csv")
+```
+
+```{r, include=FALSE}
+#Load cleaned dataset (before Russia's threat)
+data_before0 = read.csv("data_before.csv") 
+data_before0$user_id <- as.character(data_before0$user_id) #needs to be rerun if the data is loaded again
+```
+
+# 6. Text Preperation
+
+Our text data contains characters, like punctuations, stop words, hashtags etc, that does not give information and increase the complexity of the analysis. So, in order to simplify our data, we remove all this noise to obtain a clean and analyzable dataset as a next step.
+
+Tokenization: breaking a stream of text into words, phrases, symbols
+Normalization: converting all letters to lower or upper case, removing punctuations, numbers and white spaces, removing stop words
+
+```{r, echo=T, results='hide', message=FALSE, warning=FALSE}
+data_before <- data_before0 %>% select(text,user_id) 
+data_after <- query3 %>% select(text,user_id)
+
+#Cleaning the text (removing links, punctuations, spaces,...) and tokenize the words
+#additionally: remove duplicated tweets, and add an index number for the tweets
+tweets.clean = function(dataset){
+    text_cleaning_tokens <- dataset %>%  mutate(text = str_replace_all(text, "’", "'"))  
+    text_cleaning_tokens$text <- iconv(text_cleaning_tokens$text, to = "ASCII", sub = " ")  #Convert to basic ASCII text to avoid unusual characters
+    text_cleaning_tokens$text <- tolower(text_cleaning_tokens$text)  #Make everything consistently lower case
+    text_cleaning_tokens$text <-gsub('http\\S+\\s*', " ", text_cleaning_tokens$text)   #Remove links
+    text_cleaning_tokens$text = gsub("[[:digit:]]", "", text_cleaning_tokens$text) #Remove digits 
+    text_cleaning_tokens$text <- gsub("#[a-z,A-Z]*","",text_cleaning_tokens$text) #Remove hashtags
+    text_cleaning_tokens$text <- gsub("@\\w+", " ", text_cleaning_tokens$text)  # Remove user names
+    text_cleaning_tokens$text <- gsub( "[\r\n]"," ", text_cleaning_tokens$text) #Remove new lines
+    text_cleaning_tokens$text <- gsub("&amp", " ", text_cleaning_tokens$text)  # "&" is "&amp" in HTML
+    text_cleaning_tokens$text <- gsub("[ |\t]{2,}", " ", text_cleaning_tokens$text)  #Remove tabs
+    
+    text_cleaning_tokens =     text_cleaning_tokens[!duplicated(text_cleaning_tokens[,c('text')]),]
+    text_cleaning_tokens = text_cleaning_tokens  %>% dplyr::mutate(index = row_number()) #add an index number for the unique tweets
+    
+    #transform into tidy format (1 word per row (instead of 1 tweet per row))
+    text_cleaning_tokens <- text_cleaning_tokens %>%
+      unnest_tokens(word, text, token='tweets',strip_punct=FALSE) %>%   anti_join(stop_words)
+    
+    text_cleaning_tokens$word <- gsub("^ ", "", text_cleaning_tokens$word)  #Leading   blanks
+    text_cleaning_tokens$word <- gsub(" $", "", text_cleaning_tokens$word)  #Lagging blanks
+    text_cleaning_tokens$word <- gsub(" +", "", text_cleaning_tokens$word)  #General spaces
+    
+    #drop words with are either stop words or length == 1 
+    text_cleaning_tokens$word<-(gsub("[[:punct:]]", " ",text_cleaning_tokens$word))
+    text_cleaning_tokens <- text_cleaning_tokens %>% filter(!(nchar(word) == 1))%>% 
+      filter(!(word==""))
+    
+    text_cleaning_tokens <- tibble(text_cleaning_tokens)
+    
+    return(text_cleaning_tokens)
+    }
+
+# Apply tweets clean function to the two datasets
+data_before_tokens = tweets.clean(data_before)
+data_after_tokens = tweets.clean(data_after)
+```
+
+```{r}
+print(data_before_tokens) 
+print(data_after_tokens) 
+```
+
+Next, we recombine the tokens based on user id.  
+
+```{r , echo=T, results='hide', message=FALSE, warning=FALSE}
+# Recombine tokens 
+recombine.tokens = function(dataset) {
+        text_cleaning_tokens = dataset
+        tokens <- text_cleaning_tokens %>%dplyr:: mutate(ind = row_number())
+        tokens <- tokens %>% group_by(index) %>% dplyr::mutate(ind = row_number()) %>%
+        tidyr::spread(key = ind, value = word)
+        
+        tokens [is.na(tokens)] <- ""
+        tokens <- tidyr::unite(tokens, text,-index, -user_id,sep =" " )
+        
+        copy_tokens<- as.data.frame(tokens$text)
+        colnames(copy_tokens)[1] = "text"
+        return(copy_tokens)
+        }
+
+tweets_before = recombine.tokens(data_before_tokens)
+tweets_after = recombine.tokens(data_after_tokens)
+```
+
+Afterwards, we create a corpus with `tm` package and convert the words in the corpus into lemmatized words.
+Lemmatization: remove inflections and map a word to its root form. 
+
+```{r, echo=T, results='hide', message=FALSE, warning=FALSE}
+# Create a corpus and stem it
+corpus_before <- Corpus(VectorSource(tweets_before$text))
+corpus_before <- tm_map(corpus_before,  lemmatize_strings)
+
+corpus_after <- Corpus(VectorSource(tweets_after$text))
+corpus_after <- tm_map(corpus_after,  lemmatize_strings)
+```
+
+```{r}
+writeLines(rbind(as.character(corpus_before[[100]]),as.character(corpus_after[[100]]))) #show example cleaned tweets from the two datasets
+```
+
+Aboves are the example of a cleaned tweets for before and after threat.
+
+# 7. Descriptive Analysis
+
+## 7.1 Wordcloud
+
+```{r}
+set.seed(1234)
+palet  = brewer.pal(8, 'Dark2')
+wordcloud(corpus_before, min.freq = 20, scale = c(4, 0.2) , random.order = TRUE, col = palet)
+wordcloud(corpus_after, min.freq = 50, scale = c(2, 0.4) , random.order = TRUE, col = palet)
+```
+
+From the resulting word clouds we can see that the words are colored differently, which is based on the frequencies of the words appearing in the tweets. Looking at the most largest two fonts (black and orange) in before threat tweets, we can find these words: price, oil, and gas. For after threat tweets, we can observe following words:crisis, price, oil, gas, and food.
+
+Intuitively enough, we can say that a topic related to gas supply and price are present in both data set. Moreover, in the after threat dataset, words like: solution, accelerate, investment, green and transition potentially shows support in green energy. Whereas, in the before threat dataset, words like: border, military,invade, and nato shows that tweets are more orientated towards supporting Ukraine.
+
+
+## 7.2 Most frequent words
+
+We plot the most frequent words in a barplot to visually see how their frequencies are distributed.
+
+```{r}
+# Find the terms used most frequently
+tdm0<- TermDocumentMatrix(corpus_before)
+term.freq <- rowSums(as.matrix(tdm0))
+term.freq <- subset(term.freq, term.freq > 80)
+df_before <- data.frame(term = names(term.freq), freq= term.freq)
+
+tdm1<- TermDocumentMatrix(corpus_after)
+term.freq <- rowSums(as.matrix(tdm1))
+term.freq <- subset(term.freq, term.freq > 240)
+df_after <- data.frame(term = names(term.freq), freq= term.freq)
+
+```
+
+```{r}
+# Plot the graph of frequent terms
+ggplot(df_before, aes(reorder(term, freq),freq)) + theme_bw() + geom_bar(stat = "identity")  + coord_flip() +labs(list(x="Terms", y="Term Counts"))+ggtitle("Term Frequency Chart for Before Threat")
+ggplot(df_after, aes(reorder(term, freq),freq)) + theme_bw() + geom_bar(stat = "identity")  + coord_flip() +labs(list(x="Terms", y="Term Counts"))+ggtitle("Term Frequency Chart for After Threat")
+```
+
+In the both dataset, the most frequent words are 'energy' and 'war' or 'ukraine'. This is expected as our search keyword is a combination of these words. After threat, the words 'crisis','gas' and 'oil' shows an increase in the order ranking and surpasses 'biden'. While the concerns may have been more political before they are now reflecting more nuance after. Interestingly, words such as 'food', 'climate' and 'policy' become visible after Russia's threat. Additionaly, we see that before Russia's threat to Europe, 'war' was mentioned slightly more than the word 'energy'. This differs significantly after the threat, where we see 'war' is mentioned around 1.9k times while 'energy' was mentioned around two times and a half that figure rounding to 5.3k, signaling shift in the focus towards energy.
+
+As a final remark, by checking the list of frequent words, we can approve the quality of our text cleaning process such that tokens do not require any extra pre-processing.
+
+Next, we examine the word associations of 'energy' and 'transition in both datasets.
+
+```{r}
+# Find association with a specific keyword in the tweets 
+findAssocs(tdm0, "energy", 0.1) #before the threat
+findAssocs(tdm1, "energy", 0.1) #after the threat
+```
+From our resulting associations for word 'energy', we can see that after the threat there is a shift in the association towards renewable and transition, while before threat it is more scattered among different topics such as Russia's role in being provider for energy sources,refugees, and stock market. 
+
+```{r}
+findAssocs(tdm0, "transition", 0.1) #before 
+findAssocs(tdm1, "transition", 0.1) #after
+```
+Again, we can see that after threat, the word 'transition' is used commonly with words such as accelerate, green, speed and renewable. While before, we noticed that stress, fossil, and heavily (depending on Russia's supply) are highly associated with transition. This shows that people were already worrying about the energy sources, however, after the threat we can infer that there is more call for an action to accelerate the transition towards green energy sources. 
+
+# 8. Bigram Analysis
+
+Just as we have analysed associations of specific words we would like to analyse all possible 2 word combinations. We plot the log-weight distribution for each of these combinations assuming a bin size of 15. 
+
+```{r , echo=T, results='hide', message=FALSE, warning=FALSE}
+# Weight plot Before
+bi.gram.words <- subset(tweets_before, select = "text") %>%
+  unnest_tokens(
+    input = text, 
+    output = bigram, 
+    token = 'ngrams', 
+    n = 2) %>% 
+  filter(! is.na(bigram))
+
+bi.gram.words %>% 
+  select(bigram) %>% 
+  head(10)
+
+bi.gram.words %<>% 
+  separate(col = bigram, into = c('word1', 'word2'), sep = ' ') %>% 
+  filter(! is.na(word1)) %>% 
+  filter(! is.na(word2)) 
+
+bi.gram.count <- bi.gram.words %>% 
+  dplyr::count(word1, word2, sort = TRUE) %>% 
+  # We rename the weight column so that the 
+  # associated network gets the weights.
+  dplyr::rename(weight = n)
+
+bi.gram.count %>% 
+  mutate(weight = log(weight + 1)) %>% 
+  ggplot(mapping = aes(x = weight)) +
+    theme_light() +
+    stat_bin(bins = 15)+
+    geom_histogram() +
+    labs(title = "Bigram log-Weight Distribution for Before threat tweets")
+```
+
+It is to our benefit to explore this further into a network graph, this is done in order to visualize better the associations between words. For this analysis, we use weight thresholding. The value of the weight is chosen by trial and error to pick a network graph that showed enough of intricate links while not being overwhelming or even none informative. Therefore, we chose a weight that needs to be above of 10 for before threat and 60 for after threat datasets. While too high a value of threshold would barely hold any valuable association, and too low of a threshold would represent practically all links, which would not give any valuable information.
+
+```{r , echo=T, results='hide', message=FALSE, warning=FALSE}
+# Network generating
+threshold <- 14
+
+# For visualization purposes we scale by a global factor
+ScaleWeight <- function(x, lambda) {
+  x / lambda
+}
+
+network <-  bi.gram.count %>%
+  filter(weight > threshold) %>%
+  mutate(weight = ScaleWeight(x = weight, lambda = 2E3)) %>% 
+  graph_from_data_frame(directed = FALSE)
+```
+
+```{r}
+# Network plot
+ plot(
+  network, 
+  vertex.size = 1,
+  vertex.label.color = 'black', 
+  vertex.label.cex = 0.7, 
+  vertex.label.dist = 1,
+  edge.color = 'gray', 
+  main = 'Bigram Count Network Before', 
+  sub = glue('Weight Threshold: {threshold}'), 
+  alpha = 50
+)
+
+```
+
+In the biagram network of before threat tweets, we can observe that there are three highly circular interlinked pairs. The first one is between 'energy', 'war, 'ukraine','pushing', 'russia', and 'biden': relating to conflict-oriented topics.The second one is 'oil', 'gas', and 'prices': relating to energy-oriented topics. The last one is 'nord', 'policy', 'renewable' and 'stream': such as supply-related topics. 
+
+The same code is repeated for the dataset after threat:
+
+```{r, echo=FALSE}
+# Weight plot 
+bi.gram.words <- subset(tweets_after, select = "text") %>%
+  unnest_tokens(
+    input = text, 
+    output = bigram, 
+    token = 'ngrams', 
+    n = 2) %>% 
+  filter(! is.na(bigram))
+
+bi.gram.words %>% 
+  select(bigram) %>% 
+  head(10)
+
+bi.gram.words %<>% 
+  separate(col = bigram, into = c('word1', 'word2'), sep = ' ') %>% 
+  filter(! is.na(word1)) %>% 
+  filter(! is.na(word2)) 
+
+bi.gram.count <- bi.gram.words %>% 
+  dplyr::count(word1, word2, sort = TRUE) %>% 
+  # We rename the weight column so that the 
+  # associated network gets the weights.
+  dplyr::rename(weight = n)
+```
+
+```{r,echo=FALSE}
+bi.gram.count %>% 
+  mutate(weight = log(weight + 1)) %>% 
+  ggplot(mapping = aes(x = weight)) +
+    theme_light() +
+    stat_bin(bins = 15)+
+    geom_histogram() +
+    labs(title = "Bigram log-Weight Distribution for After threat tweets")
+
+# Network generating
+threshold <- 60
+
+# For visualization purposes we scale by a global factor
+ScaleWeight <- function(x, lambda) {
+  x / lambda
+}
+
+network <-  bi.gram.count %>%
+  filter(weight > threshold) %>%
+  mutate(weight = ScaleWeight(x = weight, lambda = 2E3)) %>% 
+  graph_from_data_frame(directed = FALSE)
+network
+is.weighted(network)
+
+# Network plot
+ plot(
+  network, 
+  vertex.size = 1,
+  vertex.label.color = 'black', 
+  vertex.label.cex = 0.7, 
+  vertex.label.dist = 1,
+  edge.color = 'gray', 
+  main = 'Bigram Count Network After', 
+  sub = glue('Weight Threshold: {threshold}'), 
+  alpha = 50
+)
+```
+
+We can observe that the combinations in after threat tweets are highly skewed, in other words the some combination have a high log-weight while other have very low log-weight. The bigram network shows in some sort of circular fashion links, where 'energy', 'food', 'crisis', 'prices' are interlinked. Words sprout out from these, such concerns about security costs, renewable energy, transitions , and independence. Another circular link is that of 'war', 'ukraine', 'russia': the words linked to them are more conflict-oriented: 'putin', 'sanctions','invasion'. Some isolated networks are for example "change, climate' , 'cost, living' and 'fuels, fossils'.
+
+Our analysis stops at bigram analysis while it could have n-grams possibilities. This is to be discussed in further studies. While this network is a worthy add to our analysis, LDA is neccessary to provide with Topics. This network can help understand links between words for better interpretations and maybe visualize even if not without flaws some topic clusters in a way. 
+
+# 9. Unsupervised text analysis: Topic Modelling
+
+We tried to perfom topic modelling on the corpus of both datasets: 
+
+```{r, warning=FALSE}
+# Before Threat Topic Modelling
+
+# Create a DTM(document term matrix)
+doc.lengths <- rowSums(as.matrix(DocumentTermMatrix(corpus_before)))
+dtm <- DocumentTermMatrix(corpus_before[doc.lengths > 0])
+
+SEED = 123  # Pick a random seed for replication
+k = 3  # Let's start with 10 topics
+
+models <- list(
+  #CTM       = CTM(dtm, k = k, control = list(seed = SEED, var = list(tol = 10^-4), em = list(tol = 10^-3))),
+  #VEM       = LDA(dtm, k = k, control = list(seed = SEED)),
+  #VEM_Fixed = LDA(dtm, k = k, control = list(estimate.alpha = FALSE, seed = SEED)),
+  Gibbs     = LDA(dtm, k = k, method = "Gibbs", control = list(seed = SEED, burnin = 1000, thin = 100,    iter = 1000))
+)
+
+# Top 10 terms of each topic for each model
+lapply(models, terms, 15)
+
+```
+
+- Topic 1: Economy crisis arise from energy price increases.
+
+- Topic 2: Energy policies to be independent from Russian oil.
+
+- Topic 3: Sanctions applied by the European countries.
+
+```{r, warning=FALSE}
+# After Threat Topic Modelling
+
+#create a DTM(document term matrix)
+doc.lengths2 <- rowSums(as.matrix(DocumentTermMatrix(corpus_after,control = list(weighting =function(x)
+  weightTfIdf(x, normalize =FALSE)))))
+dtm2 <- DocumentTermMatrix(corpus_after[doc.lengths2 > 0])
+
+# Now for some topics
+SEED = 123  # Pick a random seed for replication
+k = 3  # number of topics
+
+models2 <- list(
+  #CTM       = CTM(dtm, k = k, control = list(seed = SEED, var = list(tol = 10^-4), em = list(tol = 10^-3))),
+  #VEM       = LDA(dtm, k = k, control = list(seed = SEED)),
+  #VEM_Fixed = LDA(dtm, k = k, control = list(estimate.alpha = FALSE, seed = SEED)),
+  Gibbs     = LDA(dtm, k = k, method = "Gibbs")
+)
+
+# Top 10 terms of each topic for each model
+lapply(models2, terms, 15)
+```
+
+- Topic 1: Sanctions applied by the European countries.
+
+- Topic 2: President Biden supports the independence from Russian oil/gas.
+
+- Topic 3: Price increases related to energy.
+
+Overall, looking at the top 15 terms for before and after the threat, we do not see clear difference in those terms in the shown 3 topics. Despite testing for numerous different numbers of topics and tuning parameters, this issue remained.
+
+# 10. Sentiment Analysis
+
+## 10.1 Sentiment Analysis at Word Level
+
+Three different lexicons for sentiment analysis at word level are: 
+
+1) Bing: categorizes words in a binary fashion into positive and negative categories. 
+2) AFFIN: assigns words with a score that runs between -5 and 5, with negative scores indicating negative sentiment and positive scores indicating positive sentiment.Moreover,it is developed to analyze Tweets. 
+3) NRC: categorizes words in a binary fashion ("yes"/"no") into categories of positive, negative, anger, anticipation, disgust, fear, joy, sadness, surprise, and trust.
+
+```{r}
+# To see the individual lexicons 
+get_sentiments("afinn")
+get_sentiments("bing")
+get_sentiments("nrc")
+
+# Create a list of for input data 
+dfList<-list(data_before_tokens,data_after_tokens)
+```
+
+```{r , echo=T, message=FALSE, warning=FALSE}
+# Method 1: Bing
+
+# Proportion comparison of the overall sentiment
+result_list_overall <-
+    llply(dfList, function(x) {
+    overall<- x %>%
+    inner_join(get_sentiments("bing")) %>%
+    dplyr::count(sentiment, sort = TRUE) %>%
+    spread(key = sentiment, value = n) %>%
+    mutate(neg_proportion =(negative/(negative+positive)))%>%
+    return(overall)})
+
+result_list_overall[[1]]
+result_list_overall[[2]]
+
+# FIGURE 1 & 2: Plot the negatives and positives
+result_list_neg_pos <-
+    llply(dfList, function(x) {
+    neg_pos<- x %>%
+    inner_join(get_sentiments("bing")) %>%
+    dplyr::count(word, sentiment, sort = TRUE) %>%
+    group_by(sentiment) %>%
+    top_n(25) %>%
+    mutate(word = reorder(word,n)) %>%
+    ggplot(aes(word,n,fill = sentiment)) +
+    geom_col(show.legend = F) +
+    facet_wrap(~sentiment, scales = "free_y") +
+    labs(title = "Tweets: Positive or Negative", y = "Contribution to sentiment", x = NULL) +
+    coord_flip() +
+    theme_classic()
+    return(neg_pos)})
+
+result_list_neg_pos[[1]]
+result_list_neg_pos[[2]]
+
+#findAssocs(tdm1, "crude", 0.1)
+#findAssocs(tdm1, "shortage", 0.1) 
+
+# FIGURE 3 & 4: Wordclouds 
+result_list_wordclouds <-
+    llply(dfList, function(x) {
+    plot <- x %>%
+    inner_join(get_sentiments("bing")) %>%
+    dplyr::count(word, sentiment, sort = TRUE) %>%
+    acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+    comparison.cloud(colors = c("red", "blue"),max.words = 150,scale=c(4,0.1))
+    return(plot)})
+```
+
+```{r, echo=FALSE}
+result_list_wordclouds[[1]]
+result_list_wordclouds[[2]]
+
+```
+
+Overall, we see that Bing method classifies words properly with some exceptions. For instance the word 'windfall' categorized generically as positive but, in the context of economy, might more appropriately be classified as neutral (e.g. windfall tax). Furthermore, 'cheap' could be part of a bigram which is not necessarily a negative context such as 'cheaper energy'.
+
+Figure 1 and 2 shows how much each word contributes to each sentiment, and Figure 3 and 4 visualizes the most important positive and negative words. In the later plots, the size of a word’s text is in proportion to its frequency within its sentiment, however, the sizes of the words are not comparable across sentiments.
+
+We can see that the majority of words in both tweets of after and before threat are considered to be negative (negative_before:2303, positive_before:926, negative_after:7076, and positive_after:3230).
+
+Comparing the top words that contribute to negative sentiments, we observe there are some words in after threat that were not present in before threat which relates to fossil fuel such as 'crude'. In after threat tweets, the word 'crude' associates with words like 'oil', 'pump' and 'import'. This can be interpreted as peoples' having more negative opinions towards fossil fuel production and dependency.
+
+Similarly, in the top words that contribute to positive sentiments, words such as 'sustainable' and 'solidarity' only becomes present after Russia threatened to cut supplying gas to Europe. Moreover, we see a significant increase in the contribution of the word 'clean' to positive sentiment after threat. This word associates with 'generate' by 41%, and 'wind' by 0.36 in before threat tweets. Whereas, in after threat tweets, it associates with 'pathway', 'urgently' and 'reconfirmation' by 21%, also with 'transition' by 17%. This shows that after Russia's threat people's opinion on transition to clean energy became more dominantly positive. 
+
+Finally, the wordclouds delineate the most recurring positive and negative words. 
+
+```{r , echo=T, message=FALSE, warning=FALSE}
+# Method 2: AFINN
+result_list_afinn <- 
+  llply(dfList, function(x) {
+    plot <- x %>%
+    inner_join(get_sentiments("afinn")) %>%
+    group_by(user_id) %>%
+    dplyr::summarise(sentiment = sum(value)) %>%
+    dplyr::mutate(n=row_number())%>%
+    group_by(index = n %/% 25) %>%
+    dplyr::summarise(sentiment = sum(sentiment)/25) %>%
+    dplyr::mutate(method = "AFINN") %>%
+    ggplot(aes(index, sentiment, fill = sentiment)) +
+    geom_bar(stat="identity")+
+    xlab(NULL) +
+    theme(legend.position="none")
+    return(plot)})
+
+result_list_afinn[[1]]
+result_list_afinn[[2]]
+
+```
+
+Next, we examined how average sentiment (positive/negative) changes throughout bin of 25 words using AFINN lexicon. Clearly, after threat the average intensity of negative sentiment decreased. This might be a result of a shift from negative words such as fear and stress towards more positive words like clean, sustainable and other words associated with call for an action to accelerate the energy transition to decrease dependency on Russia.  
+
+```{r , echo=T, message=FALSE, warning=FALSE}
+# Method 3: NRC
+result_list_nrc <- 
+  llply(dfList, function(x) {
+    count <- x %>%
+    inner_join(get_sentiments("nrc"))%>% 
+    select(word,sentiment)  %>% 
+    dplyr::count(sentiment, sort = TRUE)%>% 
+    mutate(percentage=n/sum(n))
+    return(count)})
+
+result_list_nrc[[1]]
+result_list_nrc[[2]]
+
+```
+
+When we use the NRC lexicon to assess the different sentiments that are represented across two datasets, we can see that there is a stronger negative presence than positive in both. In line with our previous findings with AFINN lexicon, we observe a decrease in fear and negative sentiments by approximately 6% and 5% respectively, and an increase in positive sentiment by 4%.
+
+
+## 10.2 Sentiment Analysis at Full Tweet Level
+
+Using the `sentimentr` library, we can analyze full tweets and examine a **meanSentiment** score instead of word-by-word classification. The **meanSentiment** tells us how positive (1) or negative (-1) the sentiment is, and  0 simply implies neutral.
+
+```{r , echo=T, results='hide',message=FALSE, warning=FALSE}
+result_list_meanSentiment <- 
+  llply(dfList, function(x) {
+    meanSentiment <- sentiment(get_sentences(x$word)) %>% 
+    group_by(x$user_id) %>% 
+    dplyr::summarize(meanSentiment = mean(sentiment))
+    return(meanSentiment)})
+
+result_list_meanSentiment[[1]]
+result_list_meanSentiment[[2]]
+```
+
+
+```{r blockname, echo = FALSE, include = FALSE}
+# Before
+print("Before threat:")
+print(paste0("Most negative tweets sentiment: ", min(result_list_meanSentiment[[1]]$meanSentiment)))
+print(paste0("Most positive tweets sentiment: ", max(result_list_meanSentiment[[1]]$meanSentiment)))
+print(paste0("# of Negative Tweets: ", sum(result_list_meanSentiment[[1]]$meanSentiment < 0)))
+print(paste0("# of Neutral Tweets: ", sum(result_list_meanSentiment[[1]]$meanSentiment == 0)))
+print(paste0("# of Positive Tweets: ", sum(result_list_meanSentiment[[1]]$meanSentiment > 0)))
+
+# After
+print("After threat:")
+print(paste0("Most negative tweets sentiment: ", min(result_list_meanSentiment[[2]]$meanSentiment)))
+print(paste0("Most positive tweets sentiment: ", max(result_list_meanSentiment[[2]]$meanSentiment)))
+print(paste0("# of Negative Tweets: ", sum(result_list_meanSentiment[[2]]$meanSentiment < 0)))
+print(paste0("# of Neutral Tweets: ", sum(result_list_meanSentiment[[2]]$meanSentiment == 0)))
+print(paste0("# of Positive Tweets: ", sum(result_list_meanSentiment[[2]]$meanSentiment > 0)))
+```
+
+```{r showblockname, ref.label='blockname', eval=FALSE}
+```
+
+```{r blockname, echo=FALSE, collapse=TRUE}
+```
+
+We can see that our most negative tweet is -0.5 for both dataset. Whereas, after threat tweets have a maximum positive sentiment (0.6) that is stronger than the maximum positive sentiment (0.3) of a before threat tweets. Additionally, number of negative tweets increased by less than 3 times, while number of positive tweets increased by almost 5 times.
+
+```{r}
+# Pie chart of sentiment percentage distribution, weighted by sentiment score for tweets 
+
+# Before
+slices <- c(sum(result_list_meanSentiment[[1]]$meanSentiment < 0),sum(result_list_meanSentiment[[1]]$meanSentiment == 0),sum(result_list_meanSentiment[[1]]$meanSentiment > 0))
+labels <- c("Negative Tweets: ", "Neutral Tweets: ", "Positive Tweets: ")
+pct <- round(slices/sum(slices)*100)
+labels <- paste(labels, pct, "%", sep = "") #customize labeling
+#add in appropriate colors for positive, neutral, negative
+pie(slices, labels = labels, col=c('red', 'yellow', 'green'), 
+   main="Tweet Sentiment Percentages Before Threat")
+
+# After
+slices <- c(sum(result_list_meanSentiment[[1]]$meanSentiment < 0),sum(result_list_meanSentiment[[2]]$meanSentiment == 0),sum(result_list_meanSentiment[[2]]$meanSentiment > 0))
+labels <- c("Negative Tweets: ", "Neutral Tweets: ", "Positive Tweets: ")
+pct <- round(slices/sum(slices)*100)
+labels <- paste(labels, pct, "%", sep = "") #customize labeling
+#add in appropriate colors for positive, neutral, negative
+pie(slices, labels = labels, col=c('red', 'yellow', 'green'), 
+   main="Tweet Sentiment Percentages After Threat")
+
+```
+
+When we weight the tweets by their sentiment score, we see significant increase in the positive tweets. This finding is consistent with our previous analysis on the word-level sentiment, where the number of positive words saw a higher increase then the negative words after the threat. 
+
+
+# 11. Limitations of the study
+
+- We did not address the sparsity, as well as, exploring the option of removing most common words from the corpus of tweets. This could improve the modelling results in a future work.
+
+- We used "Bag of Words” approach which does not capture the relationships between words. It ignores order and context. Another interesting approach would have been to use "TF-IDF" model which could have improved the sentiment anlaysis results.
+
+- Alternative lexicons for sentiment analysis could be used to optimize the analysis, as certain words are not correctly categorized in our dataset. 
+
+- Our dataset is limited to twitter users and so only people who have access to the this platform are taking into account. This creates a bias in our sampling method, thus, our results might be less representative of the population. 
+
+# 12. Conclusion
+
+We adopted a topic modelling technique to get insights on the topics associated with energy and pre- and post Russia's threat. In addition, we used three different lexicons for sentiment analysis at word level, and also sentiment analysis at full tweet level. 
+The results show, that referring to the first research questions, people were talking about similar topics before and after Russia's threat, which were related to economy, sanctions, and energy policies. Referring to the second research question, a negative attitude in the tweeting world prevails regarding the energy crisis both pre- and post threat. However, after the threat, people were posting about 'renewable' and 'energy transition' much frequently than before. Also, people have experienced a shift from fear to positive sentiments,indicating that people focused more on calling for an action and finding alternatives such as green energy.
+
+
+
+
+
